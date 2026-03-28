@@ -1,0 +1,213 @@
+{
+  "_comment": "Pterodactyl Egg — TeleBot Agent MCP v2",
+  "meta": {
+    "version": "PTDL_v2",
+    "update_url": null
+  },
+  "exported_at": "2025-01-01T00:00:00+00:00",
+  "name": "TeleBot Agent MCP v2",
+  "author": "agent@localhost",
+  "description": "Multi-channel AI Agent (Telegram + WhatsApp) with MCP tools. Supports OpenAI, OpenRouter, Gemini, Anthropic, Groq, and any custom OpenAI-compatible provider.",
+  "features": null,
+  "docker_images": {
+    "Node.js 20": "ghcr.io/parkervcp/yolks:nodejs_20",
+    "Node.js 18": "ghcr.io/parkervcp/yolks:nodejs_18"
+  },
+  "file_denylist": [],
+  "startup": "node {{STARTUP_FILE}}",
+  "config": {
+    "files": "{}",
+    "startup": "{\"done\": \"Bot started\"}",
+    "logs": "{}",
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/bash\napt-get update -y\napt-get install -y git curl\ncd /mnt/server\nif [ -d .git ]; then\n  git pull\nelse\n  git clone https://github.com/whofik/telebot-agent-mcp . || true\nfi\nnpm install --production\nmkdir -p data\nif [ ! -f .env ]; then\n  cp .env.example .env\n  echo '[Install] .env created from .env.example — please configure it!'\nfi\necho '[Install] Done!'",
+      "container": "ghcr.io/parkervcp/yolks:nodejs_20",
+      "entrypoint": "bash"
+    }
+  },
+  "variables": [
+    {
+      "name": "Startup File",
+      "description": "The main file to start the bot",
+      "env_variable": "STARTUP_FILE",
+      "default_value": "index.js",
+      "user_viewable": true,
+      "user_editable": false,
+      "rules": "required|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Telegram Bot Token",
+      "description": "Token from @BotFather",
+      "env_variable": "TELEGRAM_BOT_TOKEN",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Telegram Owner ID",
+      "description": "Your Telegram user ID (get from @userinfobot)",
+      "env_variable": "TELEGRAM_OWNER_ID",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|numeric",
+      "field_type": "text"
+    },
+    {
+      "name": "Enable WhatsApp",
+      "description": "Enable WhatsApp channel (true/false)",
+      "env_variable": "ENABLE_WHATSAPP",
+      "default_value": "false",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|in:true,false",
+      "field_type": "text"
+    },
+    {
+      "name": "WhatsApp Owner Number",
+      "description": "Your WhatsApp number with country code, no + (e.g. 6281234567890)",
+      "env_variable": "WHATSAPP_OWNER_NUMBER",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "AI Provider",
+      "description": "AI provider to use: openai | openrouter | gemini | anthropic | groq | custom",
+      "env_variable": "AI_PROVIDER",
+      "default_value": "openrouter",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string",
+      "field_type": "text"
+    },
+    {
+      "name": "OpenRouter API Key",
+      "description": "API key from openrouter.ai",
+      "env_variable": "OPENROUTER_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "OpenRouter Model",
+      "description": "Model to use on OpenRouter (e.g. google/gemini-2.0-flash-exp)",
+      "env_variable": "OPENROUTER_MODEL",
+      "default_value": "google/gemini-2.0-flash-exp",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Gemini API Key",
+      "description": "API key from Google AI Studio",
+      "env_variable": "GEMINI_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "OpenAI API Key",
+      "description": "API key from OpenAI",
+      "env_variable": "OPENAI_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Anthropic API Key",
+      "description": "API key from Anthropic",
+      "env_variable": "ANTHROPIC_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Groq API Key",
+      "description": "API key from Groq",
+      "env_variable": "GROQ_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Custom API Key",
+      "description": "API key for custom OpenAI-compatible provider",
+      "env_variable": "CUSTOM_API_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Custom Base URL",
+      "description": "Base URL for custom OpenAI-compatible provider (e.g. https://your-provider.com/v1)",
+      "env_variable": "CUSTOM_BASE_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Custom Model",
+      "description": "Model name for custom provider",
+      "env_variable": "CUSTOM_MODEL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Agent Name",
+      "description": "Name of your AI agent",
+      "env_variable": "AGENT_NAME",
+      "default_value": "Agent",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string",
+      "field_type": "text"
+    },
+    {
+      "name": "Require Approval",
+      "description": "Require owner approval for new users (true/false)",
+      "env_variable": "REQUIRE_APPROVAL",
+      "default_value": "true",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|in:true,false",
+      "field_type": "text"
+    },
+    {
+      "name": "HTTP Port",
+      "description": "Port for health check server",
+      "env_variable": "HTTP_PORT",
+      "default_value": "3000",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|numeric",
+      "field_type": "text"
+    }
+  ]
+}

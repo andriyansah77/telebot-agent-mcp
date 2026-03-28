@@ -263,6 +263,12 @@ async function start() {
         return ctx.reply('⏳ Akun kamu belum disetujui. Tunggu approval dari owner.');
       }
 
+      // Persistent typing for photo processing
+      let photoDone = false;
+      const photoTyping = setInterval(async () => {
+        if (photoDone) return;
+        await ctx.sendChatAction('typing').catch(() => {});
+      }, 4000);
       await ctx.sendChatAction('typing');
 
       // Get best quality photo
@@ -275,15 +281,21 @@ async function start() {
 
       // Route through processMessage so history, RAG, tools all work
       const { processMessage } = require('../agent');
-      const result = await processMessage({
-        userId: ctx.from.id,
-        channel: 'telegram',
-        name: ctx.from.first_name,
-        text: caption,
-        imageUrl,
-      });
+      let photoResult;
+      try {
+        photoResult = await processMessage({
+          userId: ctx.from.id,
+          channel: 'telegram',
+          name: ctx.from.first_name,
+          text: caption,
+          imageUrl,
+        });
+      } finally {
+        photoDone = true;
+        clearInterval(photoTyping);
+      }
 
-      const { reply, media } = result;
+      const { reply, media } = photoResult;
 
       if (media) {
         try {
@@ -455,15 +467,31 @@ async function start() {
       db.approveUser(ctx.from.id, 'telegram');
     }
 
-    // Show typing
+    // ---- Persistent typing indicator ----
+    // Telegram typing expires every 5s — keep refreshing until done
+    let processingDone = false;
+    const typingInterval = setInterval(async () => {
+      if (processingDone) return;
+      await ctx.sendChatAction('typing').catch(() => {});
+    }, 4000);
     await ctx.sendChatAction('typing');
 
-    const result = await processMessage({
-      userId: ctx.from.id,
-      channel: 'telegram',
-      name: ctx.from.first_name,
-      text,
-    });
+    let result;
+    try {
+      result = await processMessage({
+        userId: ctx.from.id,
+        channel: 'telegram',
+        name: ctx.from.first_name,
+        text,
+        // Pass bot so agent can send progress updates mid-task
+        sendProgress: async (msg) => {
+          await ctx.reply(`⏳ ${msg}`, { parse_mode: 'Markdown' }).catch(() => {});
+        },
+      });
+    } finally {
+      processingDone = true;
+      clearInterval(typingInterval);
+    }
 
     const { reply, pending, media } = result;
     if (!reply && !media) return;

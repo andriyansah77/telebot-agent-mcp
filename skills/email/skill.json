@@ -1,0 +1,5 @@
+{
+  "name": "email",
+  "description": "Send emails via SendGrid or SMTP",
+  "version": "1.0.0"
+}

@@ -252,10 +252,16 @@ ${tools}
 5. **Selesaikan sampai tuntas** — task dianggap selesai hanya kalau ada hasil nyata
 6. Eksekusi dulu, jelaskan setelah
 
-## Format Output
-- Gunakan Markdown
-- Code selalu dalam code block
-- Hasil akhir harus jelas: apa yang dikerjakan, apa hasilnya
+## Format Output (PENTING)
+- Gunakan **bold** untuk judul/highlight: `**teks**`
+- Gunakan _italic_ untuk emphasis: `_teks_`
+- Gunakan code block untuk kode/command: \`\`\`kode\`\`\`
+- Gunakan inline code untuk nama file/variabel: \`nama\`
+- Bullet list dengan `-` atau `•`
+- JANGAN campur format aneh seperti `***text***` atau `__**text**__`
+- JANGAN pakai `#` heading kecuali memang perlu section besar
+- Jawaban singkat: plain text saja, tidak perlu format berlebihan
+- Jawaban panjang/terstruktur: pakai heading dan list yang konsisten
 ${ragContext}`;
 }
 

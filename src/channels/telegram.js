@@ -220,7 +220,7 @@ async function start() {
         resolve(err ? `❌ Error:\n${stderr || err.message}` : `✅ Output:\n${stdout || '(no output)'}`.slice(0, 3800));
       });
     });
-    await ctx.reply(`\`\`\`\n${result}\n\`\`\``, { parse_mode: 'Markdown' }).catch(() => ctx.reply(result));
+    await ctx.reply(`<pre><code>${result.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`, { parse_mode: 'HTML' }).catch(() => ctx.reply(result));
   }));
 
   // ---- /memory ----
@@ -313,7 +313,7 @@ async function start() {
       if (reply) {
         const chunks = splitMessage(reply);
         for (const chunk of chunks) {
-          await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk));
+          await sendReply(ctx, chunk);
         }
       }
 
@@ -485,7 +485,7 @@ async function start() {
         text,
         // Pass bot so agent can send progress updates mid-task
         sendProgress: async (msg) => {
-          await ctx.reply(`⏳ ${msg}`, { parse_mode: 'Markdown' }).catch(() => {});
+          await sendReply(ctx, `⏳ ${msg}`).catch(() => {});
         },
       });
     } finally {
@@ -522,11 +522,11 @@ async function start() {
       if (!reply) return;
     }
 
-    // Split long messages
+    // Split long messages and send with HTML formatting
     if (reply) {
       const chunks = splitMessage(reply);
       for (const chunk of chunks) {
-        await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk));
+        await sendReply(ctx, chunk);
       }
     }
   });
@@ -581,13 +581,86 @@ function ownerOnly(handler) {
   };
 }
 
-function splitMessage(text, maxLen = 4000) {
-  if (text.length <= maxLen) return [text];
-  const chunks = [];
-  while (text.length > 0) {
-    chunks.push(text.slice(0, maxLen));
-    text = text.slice(maxLen);
+/**
+ * Convert Markdown to Telegram HTML (safe, never throws)
+ * Handles: **bold**, *bold*, _italic_, `code`, ```code block```, [link](url)
+ */
+function markdownToHtml(text) {
+  if (!text) return '';
+
+  let result = text;
+
+  // Escape HTML special chars first (except we'll add our own tags)
+  result = result
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Code blocks (``` ... ```) — must be before inline code
+  result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    return `<pre><code>${code.trim()}</code></pre>`;
+  });
+
+  // Inline code (`code`)
+  result = result.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+  // Bold: **text** or __text__
+  result = result.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+  result = result.replace(/__([^_\n]+)__/g, '<b>$1</b>');
+
+  // Italic: *text* or _text_ (single, not double)
+  result = result.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<i>$1</i>');
+  result = result.replace(/(?<!_)_([^_\n]+)_(?!_)/g, '<i>$1</i>');
+
+  // Strikethrough: ~~text~~
+  result = result.replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
+
+  // Links: [text](url)
+  result = result.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2">$1</a>');
+
+  // Headers: ## Title → <b>Title</b>
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
+
+  // Horizontal rules
+  result = result.replace(/^---+$/gm, '─────────────────');
+
+  return result;
+}
+
+/**
+ * Send a reply with HTML formatting.
+ * Falls back to plain text if HTML parse still fails.
+ */
+async function sendReply(ctx, text) {
+  const html = markdownToHtml(text);
+  try {
+    await ctx.reply(html, { parse_mode: 'HTML' });
+  } catch {
+    // Strip all tags and send plain
+    const plain = html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    await ctx.reply(plain).catch(() => {});
   }
+}
+
+/**
+ * Split long messages intelligently — try to break on newlines
+ */
+function splitMessage(text, maxLen = 3800) {
+  if (text.length <= maxLen) return [text];
+
+  const chunks = [];
+  let remaining = text;
+
+  while (remaining.length > maxLen) {
+    // Try to split at last newline before maxLen
+    let splitAt = remaining.lastIndexOf('\n', maxLen);
+    if (splitAt < maxLen * 0.5) splitAt = maxLen; // no good newline, hard split
+
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n/, '');
+  }
+
+  if (remaining.length > 0) chunks.push(remaining);
   return chunks;
 }
 

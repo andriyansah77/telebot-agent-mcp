@@ -11,7 +11,13 @@ async function start() {
     return;
   }
 
-  bot = new Telegraf(config.telegram.token);
+  bot = new Telegraf(config.telegram.token, { handlerTimeout: 120_000 });
+
+
+  // Global error handler — prevent single message crash
+  bot.catch((err, ctx) => {
+    console.error('[Telegram] Handler error:', err.message || err);
+  });
 
   // ---- Middleware: log all updates ----
   bot.use((ctx, next) => {
@@ -70,9 +76,10 @@ async function start() {
     const provider = config.ai.provider;
     const cfg = config.ai[provider] || config.ai.custom;
     const akashlmlModels = `\n\n*AkashML models:*\n• Qwen/Qwen3-30B-A3B\n• deepseek-ai/DeepSeek-V3.2\n• MiniMaxAI/MiniMax-M2.5`;
+    const blinkModels = `\n\n*Blink models:*\n• anthropic/claude-sonnet-4-5\n• anthropic/claude-opus-4-5\n• openai/gpt-4o\n• google/gemini-2.0-flash`;
     await ctx.reply(
       `🤖 *Provider:* ${provider}\n*Model:* \`${cfg.model || 'N/A'}\`` +
-      (provider === 'akashml' ? akashlmlModels : ''),
+      (provider === 'akashml' ? akashlmlModels : provider === 'blink' ? blinkModels : ''),
       { parse_mode: 'Markdown' }
     );
   });
@@ -194,9 +201,41 @@ async function start() {
     }
   });
 
-  // Launch bot
-  await bot.launch({ dropPendingUpdates: true });
-  console.log('[Telegram] Bot started');
+  // Launch bot — manual polling (bypasses Telegraf launch() hang)
+  const TOKEN = config.telegram.token;
+
+  // Delete webhook first to ensure polling mode
+  try {
+    const axios = require('axios');
+    await axios.post(`https://api.telegram.org/bot${TOKEN}/deleteWebhook`, { drop_pending_updates: true });
+    console.log('[Telegram] Webhook cleared');
+  } catch(e) {
+    console.warn('[Telegram] Could not clear webhook:', e.message);
+  }
+
+  // Start polling via Telegraf internal method
+  bot.telegram.getMe().then(me => {
+    console.log(`[Telegram] Bot connected: @${me.username}`);
+  }).catch(e => {
+    console.warn('[Telegram] getMe:', e.message);
+  });
+
+  // Use startPolling directly
+  try {
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    bot.startPolling();
+    console.log('[Telegram] Bot started successfully (polling mode)!');
+  } catch(e) {
+    console.error('[Telegram] startPolling error:', e.message);
+    // Retry after delay
+    setTimeout(() => {
+      console.log('[Telegram] Retrying startPolling...');
+      bot.startPolling();
+    }, 15000);
+  }
+
+  // Keep alive — never resolves
+  await new Promise(() => {});
 
   // Graceful shutdown
   process.once('SIGINT', () => bot.stop('SIGINT'));
@@ -223,3 +262,4 @@ function splitMessage(text, maxLen = 4000) {
 }
 
 module.exports = { start };
+

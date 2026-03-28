@@ -14,6 +14,8 @@ async function chat(messages, overrides = {}) {
       return chatAnthropic(messages, overrides);
     case 'akashml':
       return chatAkashML(messages, overrides);
+    case 'blink':
+      return chatBlink(messages, overrides);
     default:
       // openai-compatible: openai, openrouter, groq, custom
       return chatOpenAICompat(provider, messages, overrides);
@@ -140,6 +142,32 @@ async function chatAnthropic(messages, overrides) {
   });
 
   return res.data.content[0].text;
+}
+
+
+// ---- Blink AI Gateway (OpenAI-compatible) ----
+async function chatBlink(messages, overrides) {
+  const cfg = config.ai.blink;
+  const apiKey = overrides.apiKey || cfg.apiKey;
+  const model = overrides.model || cfg.model;
+
+  if (!apiKey) throw new Error('No Blink API key configured');
+
+  const body = {
+    model,
+    messages,
+    max_tokens: overrides.maxTokens || config.agent.maxTokens,
+    temperature: overrides.temperature ?? config.agent.temperature,
+  };
+
+  const res = await axios.post(`${cfg.baseUrl}/chat/completions`, body, {
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  return res.data.choices[0].message.content;
 }
 
 module.exports = { chat };

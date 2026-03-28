@@ -61,6 +61,13 @@ module.exports = {
       // - MiniMaxAI/MiniMax-M2.5 (long context)
     },
 
+    // Blink AI Gateway
+    blink: {
+      apiKey: process.env.BLINK_API_KEY || '',
+      model: process.env.BLINK_MODEL || 'anthropic/claude-sonnet-4-5',
+      baseUrl: 'https://core.blink.new/api/v1/ai',
+    },
+
     custom: {
       apiKey: process.env.CUSTOM_API_KEY || '',
       baseUrl: process.env.CUSTOM_BASE_URL || '',

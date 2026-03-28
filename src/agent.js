@@ -78,6 +78,16 @@ async function processMessage({ userId, channel, name, text }) {
   db.addHistory(userId, channel, 'user', text);
   db.addHistory(userId, channel, 'assistant', finalReply);
 
+  // Handle special reply types from skills
+  const mediaMatch = finalReply.match(/^(IMAGE|AUDIO|VIDEO):(https?:\/\/\S+)/m);
+  if (mediaMatch) {
+    return {
+      reply: finalReply.replace(mediaMatch[0], '').trim() || null,
+      media: { type: mediaMatch[1].toLowerCase(), url: mediaMatch[2] },
+      toolsExecuted: executed
+    };
+  }
+
   return { reply: finalReply, toolsExecuted: executed };
 }
 

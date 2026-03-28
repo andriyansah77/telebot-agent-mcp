@@ -240,6 +240,34 @@ async function start() {
     return ctx.reply('Usage: /memory [list|clear]');
   }));
 
+
+  // ---- /cron ----
+  bot.command('cron', ownerOnly(async (ctx) => {
+    const args = ctx.message.text.split(' ').slice(1);
+    const sub = args[0];
+    const { loadSkills } = require('../tools');
+    const skills = loadSkills();
+    const scheduler = skills['scheduler'];
+    if (!scheduler) return ctx.reply('Scheduler skill not found');
+
+    if (!sub || sub === 'list') {
+      const list = await scheduler.run({ action: 'list' });
+      return ctx.reply('⏰ *Scheduled Jobs:*\n\n' + list, { parse_mode: 'Markdown' });
+    }
+    if (sub === 'add') {
+      // /cron add <name> <expression> <task>
+      const [, name, expr, ...taskParts] = args;
+      if (!name || !expr || !taskParts.length) return ctx.reply('Usage: /cron add <name> <cron-expr> <task>\nExample: /cron add daily "0 9 * * *" Check crypto prices');
+      const result = await scheduler.run({ action: 'add', name, expression: expr, task: taskParts.join(' '), chatId: ctx.chat.id });
+      return ctx.reply(result);
+    }
+    if (sub === 'remove') {
+      const result = await scheduler.run({ action: 'remove', name: args[1] });
+      return ctx.reply(result);
+    }
+    return ctx.reply('Usage: /cron [list|add|remove]');
+  }));
+
   // ---- /install (install npm package) ----
   bot.command('install', ownerOnly(async (ctx) => {
     const pkg = ctx.message.text.split(' ').slice(1).join(' ');
@@ -267,14 +295,15 @@ async function start() {
     // Show typing
     await ctx.sendChatAction('typing');
 
-    const { reply, pending } = await processMessage({
+    const result = await processMessage({
       userId: ctx.from.id,
       channel: 'telegram',
       name: ctx.from.first_name,
       text,
     });
 
-    if (!reply) return;
+    const { reply, pending, media } = result;
+    if (!reply && !media) return;
 
     // If pending approval, also notify owner
     if (pending && config.telegram.ownerId) {
@@ -285,10 +314,29 @@ async function start() {
       ).catch(() => {});
     }
 
+    // Handle media responses (image, audio)
+    if (result.media) {
+      const { type, url } = result.media;
+      try {
+        if (type === 'image') {
+          await ctx.replyWithPhoto(url, reply ? { caption: reply } : {});
+        } else if (type === 'audio') {
+          await ctx.replyWithVoice(url, reply ? { caption: reply } : {});
+        } else {
+          await ctx.replyWithDocument(url, reply ? { caption: reply } : {});
+        }
+      } catch(e) {
+        await ctx.reply(`Media: ${url}`);
+      }
+      if (!reply) return;
+    }
+
     // Split long messages
-    const chunks = splitMessage(reply);
-    for (const chunk of chunks) {
-      await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk));
+    if (reply) {
+      const chunks = splitMessage(reply);
+      for (const chunk of chunks) {
+        await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk));
+      }
     }
   });
 

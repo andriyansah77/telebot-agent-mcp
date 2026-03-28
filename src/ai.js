@@ -1,6 +1,69 @@
 require('dotenv').config();
 const axios = require('axios');
 const config = require('./config');
+const fetch = require('node-fetch');
+const FormData = require('form-data');
+
+/**
+ * Re-host an image URL to catbox.moe so it's publicly accessible.
+ * Used for Telegram photos that may not be reachable by external AI APIs.
+ */
+async function reHostImage(imageUrl) {
+  try {
+    // Download image
+    const res = await fetch(imageUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 15000,
+    });
+    if (!res.ok) return imageUrl; // fallback to original
+    const buffer = await res.buffer();
+    const mimeType = res.headers.get('content-type') || 'image/jpeg';
+
+    // Upload to catbox.moe (anonymous, no key needed)
+    const form = new FormData();
+    form.append('reqtype', 'fileupload');
+    form.append('fileToUpload', buffer, { filename: 'image.jpg', contentType: mimeType });
+
+    const upload = await fetch('https://catbox.moe/user/api.php', {
+      method: 'POST',
+      body: form,
+      timeout: 20000,
+    });
+    const url = (await upload.text()).trim();
+    if (url.startsWith('https://')) return url;
+    return imageUrl; // fallback
+  } catch {
+    return imageUrl; // fallback
+  }
+}
+
+/**
+ * Process messages array — fix image_url content to use re-hosted URLs
+ * so external AI APIs (Gemini via Blink) can access Telegram photos.
+ */
+async function fixImageUrls(messages) {
+  const fixed = [];
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content)) {
+      fixed.push(msg);
+      continue;
+    }
+    const newContent = [];
+    for (const part of msg.content) {
+      if (part.type === 'image_url' && part.image_url?.url) {
+        const url = part.image_url.url;
+        // Re-host if it's a Telegram file URL or non-public URL
+        const needsRehost = url.includes('api.telegram.org') || url.includes('telegram.org/file');
+        const finalUrl = needsRehost ? await reHostImage(url) : url;
+        newContent.push({ type: 'image_url', image_url: { url: finalUrl } });
+      } else {
+        newContent.push(part);
+      }
+    }
+    fixed.push({ ...msg, content: newContent });
+  }
+  return fixed;
+}
 
 /**
  * Unified AI client — supports OpenAI, OpenRouter, Gemini, Anthropic, Groq, AkashML, Blink
@@ -9,17 +72,32 @@ const config = require('./config');
 async function chat(messages, overrides = {}) {
   const provider = overrides.provider || config.ai.provider;
 
+  // Check if any message has image content
+  const hasImages = messages.some(m =>
+    Array.isArray(m.content) && m.content.some(p => p.type === 'image_url')
+  );
+
+  // Fix Telegram image URLs (re-host to catbox so external APIs can access them)
+  let processedMessages = messages;
+  if (hasImages) {
+    processedMessages = await fixImageUrls(messages);
+    // For vision requests, force gemini-2.0-flash via Blink (confirmed working with public URLs)
+    if (!overrides.provider && provider === 'blink') {
+      return chatBlink(processedMessages, { ...overrides, model: 'google/gemini-2.0-flash' });
+    }
+  }
+
   switch (provider) {
     case 'gemini':
-      return chatGemini(messages, overrides);
+      return chatGemini(processedMessages, overrides);
     case 'anthropic':
-      return chatAnthropic(messages, overrides);
+      return chatAnthropic(processedMessages, overrides);
     case 'akashml':
-      return chatAkashML(messages, overrides);
+      return chatAkashML(processedMessages, overrides);
     case 'blink':
-      return chatBlink(messages, overrides);
+      return chatBlink(processedMessages, overrides);
     default:
-      return chatOpenAICompat(provider, messages, overrides);
+      return chatOpenAICompat(provider, processedMessages, overrides);
   }
 }
 

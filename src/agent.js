@@ -7,10 +7,13 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Core agent logic — v3
- * Supports native function calling (OpenAI-style) + legacy [CALL:] format
+ * Core agent logic — v4
+ * - Persistent task execution (never gives up)
+ * - sendProgress callback for long tasks
+ * - Native function calling loop (up to 10 iterations)
+ * - Tool failure → AI tries alternative approach automatically
  */
-async function processMessage({ userId, channel, name, text, imageUrl }) {
+async function processMessage({ userId, channel, name, text, imageUrl, sendProgress }) {
   // Ensure user exists
   let user = db.getUser(userId, channel);
   if (!user) user = db.upsertUser(userId, channel, name);
@@ -65,7 +68,6 @@ async function processMessage({ userId, channel, name, text, imageUrl }) {
     },
   ];
 
-  // Get tool definitions for native function calling
   const toolDefs = getToolDefinitions();
   const useNativeCalling = ['blink', 'openai', 'openrouter', 'groq', 'anthropic', 'akashml'].includes(config.ai.provider);
 
@@ -73,10 +75,9 @@ async function processMessage({ userId, channel, name, text, imageUrl }) {
   let toolsExecuted = [];
 
   if (useNativeCalling && toolDefs.length > 0) {
-    // ---- Native function calling loop ----
-    finalReply = await runAgentLoop(messages, toolDefs, toolsExecuted);
+    finalReply = await runAgentLoop(messages, toolDefs, toolsExecuted, sendProgress);
   } else {
-    // ---- Legacy [CALL:] parsing ----
+    // Legacy [CALL:] mode
     let aiReply;
     try {
       aiReply = await chat(messages);
@@ -90,16 +91,13 @@ async function processMessage({ userId, channel, name, text, imageUrl }) {
 
     if (executed.length > 0) {
       const toolResults = executed.map(e => `Tool ${e.tool} result:\n${e.output}`).join('\n\n');
-      const followUpMessages = [
+      const followUp = [
         ...messages,
         { role: 'assistant', content: aiReply },
-        { role: 'user', content: `Tool results:\n${toolResults}\n\nNow give your final response.` },
+        { role: 'user', content: `Tool results:\n${toolResults}\n\nBerikan jawaban final.` },
       ];
-      try {
-        finalReply = await chat(followUpMessages);
-      } catch {
-        finalReply = result;
-      }
+      try { finalReply = await chat(followUp); }
+      catch { finalReply = result; }
     } else {
       finalReply = result;
     }
@@ -109,9 +107,8 @@ async function processMessage({ userId, channel, name, text, imageUrl }) {
   db.addHistory(userId, channel, 'user', text || '[image]');
   db.addHistory(userId, channel, 'assistant', typeof finalReply === 'string' ? finalReply : JSON.stringify(finalReply));
 
-  // Handle media responses
+  // Media detection: legacy prefix
   if (typeof finalReply === 'string') {
-    // Legacy prefix: IMAGE:url
     const mediaMatch = finalReply.match(/^(IMAGE|AUDIO|VIDEO):(https?:\/\/\S+)/m);
     if (mediaMatch) {
       return {
@@ -122,13 +119,13 @@ async function processMessage({ userId, channel, name, text, imageUrl }) {
     }
   }
 
-  // Check if any tool result contained an IMAGE_URL
+  // Media detection: tool result IMAGE_URL
   const imgTool = toolsExecuted.find(t => t.tool === 'generateImage' && t.output?.startsWith('IMAGE_URL:'));
   if (imgTool) {
-    const imageUrl = imgTool.output.replace('IMAGE_URL:', '').trim();
+    const imgUrl = imgTool.output.replace('IMAGE_URL:', '').trim();
     return {
       reply: typeof finalReply === 'string' ? finalReply : null,
-      media: { type: 'image', url: imageUrl },
+      media: { type: 'image', url: imgUrl },
       toolsExecuted,
     };
   }
@@ -136,59 +133,104 @@ async function processMessage({ userId, channel, name, text, imageUrl }) {
   return { reply: finalReply, toolsExecuted };
 }
 
-// ---- Native function calling agent loop ----
-async function runAgentLoop(messages, toolDefs, toolsExecuted, maxIterations = 5) {
+// ---- Persistent Agent Loop ----
+// Rules:
+// 1. Max 10 tool-call iterations
+// 2. On tool error → inject error into context, let AI decide next step
+// 3. Never tell user "can't do it" — always try alternative
+// 4. If task is long, call sendProgress() between iterations
+async function runAgentLoop(messages, toolDefs, toolsExecuted, sendProgress, maxIterations = 10) {
   let currentMessages = [...messages];
+  let iteration = 0;
+  let lastProgressAt = Date.now();
 
-  for (let i = 0; i < maxIterations; i++) {
+  while (iteration < maxIterations) {
+    iteration++;
+
     let aiResponse;
     try {
       aiResponse = await chat(currentMessages, { tools: toolDefs, tool_choice: 'auto' });
     } catch (e) {
-      return `❌ AI error: ${e.message}`;
+      // AI call failed — retry once with stripped history
+      console.error(`[Agent] AI call failed (iter ${iteration}):`, e.message);
+      try {
+        // Retry with last 4 messages only
+        const stripped = [
+          currentMessages[0], // system
+          ...currentMessages.slice(-3),
+        ];
+        aiResponse = await chat(stripped, { tools: toolDefs, tool_choice: 'auto' });
+      } catch (e2) {
+        return `❌ AI tidak bisa diakses saat ini: ${e2.message}`;
+      }
     }
 
-    // String response = final answer
+    // Final text answer — done
     if (typeof aiResponse === 'string') {
       return aiResponse;
     }
 
-    // Tool calls
+    // Tool call(s)
     if (aiResponse.type === 'tool_calls' && aiResponse.tool_calls?.length > 0) {
-      const toolResults = await executeNativeToolCalls(aiResponse.tool_calls);
-      toolsExecuted.push(...toolResults.map(r => ({ tool: r.name, output: r.output })));
+      // Send progress update if task is taking long (>8s since last update)
+      const now = Date.now();
+      if (sendProgress && now - lastProgressAt > 8000 && iteration > 1) {
+        const toolNames = aiResponse.tool_calls.map(tc => tc.name || tc.function?.name).join(', ');
+        await sendProgress(`Menjalankan: \`${toolNames}\`...`).catch(() => {});
+        lastProgressAt = now;
+      }
 
-      // Add assistant message with tool calls
+      const toolResults = await executeNativeToolCalls(aiResponse.tool_calls);
+
+      // Collect executed tools
+      for (const r of toolResults) {
+        toolsExecuted.push({ tool: r.name, output: r.output });
+      }
+
+      // Add assistant turn
       currentMessages.push(aiResponse.message);
 
-      // Add tool results
+      // Add tool results — if a tool errored, inject retry instruction
       for (const result of toolResults) {
+        const isError = result.output.startsWith('Error:') || result.output.startsWith('IMAGE_ERROR:');
+
         currentMessages.push({
           role: 'tool',
           tool_call_id: result.id || result.name,
-          content: result.output,
+          content: isError
+            ? `${result.output}\n\n[SYSTEM: Tool failed. Cari cara lain untuk menyelesaikan task ini. Jangan menyerah, coba pendekatan alternatif.]`
+            : result.output,
         });
       }
-      // Continue loop for follow-up
-      continue;
+
+      continue; // next iteration
     }
 
-    // Fallback
-    return typeof aiResponse === 'string' ? aiResponse : JSON.stringify(aiResponse);
+    // Unexpected response shape — treat as final
+    return typeof aiResponse === 'string'
+      ? aiResponse
+      : (aiResponse.message?.content || JSON.stringify(aiResponse));
   }
 
-  // Max iterations hit — ask AI for final summary
+  // Hit max iterations — get final summary from AI
   try {
-    currentMessages.push({ role: 'user', content: 'Berikan jawaban final berdasarkan semua informasi yang sudah dikumpulkan.' });
-    const finalResponse = await chat(currentMessages);
-    return typeof finalResponse === 'string' ? finalResponse : JSON.stringify(finalResponse);
+    currentMessages.push({
+      role: 'user',
+      content: 'Berikan laporan final dari semua yang sudah kamu kerjakan. Apa yang berhasil, apa hasilnya, dan apa langkah selanjutnya jika ada.',
+    });
+    const final = await chat(currentMessages);
+    return typeof final === 'string' ? final : JSON.stringify(final);
   } catch {
-    return 'Selesai mengeksekusi tools. Ada pertanyaan lain?';
+    return '✅ Selesai mengeksekusi semua steps. Ketik lanjut jika ada yang perlu dilanjutkan.';
   }
 }
 
 function buildSystemPrompt(soul, ragContext) {
-  const today = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const today = new Date().toLocaleDateString('id-ID', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  });
+  const time = new Date().toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' });
   const tools = listTools();
 
   return `${soul}
@@ -196,26 +238,24 @@ function buildSystemPrompt(soul, ragContext) {
 ---
 
 ## Context
-Tanggal hari ini: ${today}
-Platform: Telegram Bot (multi-channel AI agent)
+Tanggal: ${today}, ${time} WIB
+Platform: Telegram Bot
 
-## Tools Available
-Kamu memiliki akses ke tools berikut via native function calling:
-
+## Tools
 ${tools}
 
-## Cara Kerja
-- Gunakan tools secara proaktif untuk mengumpulkan informasi
-- Chain multiple tools untuk task kompleks
-- Eksekusi dulu, jelaskan setelah
-- Kalau perlu cari informasi di web — pakai webSearch
-- Kalau perlu jalankan perintah — pakai executeCommand
-- Jawaban harus berdasarkan hasil tools, bukan tebakan
+## Prinsip Eksekusi (WAJIB DIIKUTI)
+1. **Jangan pernah berhenti di tengah task** — kalau satu cara gagal, coba cara lain
+2. **Jangan bilang "tidak bisa"** tanpa benar-benar mencoba semua opsi
+3. **Chain tools** untuk task kompleks — search → fetch → execute → verify
+4. **Kalau tool error** → analisis errornya, cari workaround, eksekusi ulang
+5. **Selesaikan sampai tuntas** — task dianggap selesai hanya kalau ada hasil nyata
+6. Eksekusi dulu, jelaskan setelah
 
-## Format
-- Gunakan Markdown untuk formatting (bold, code block, dll)
-- Pesan panjang: gunakan struktur yang jelas
-- Code: selalu dalam code block
+## Format Output
+- Gunakan Markdown
+- Code selalu dalam code block
+- Hasil akhir harus jelas: apa yang dikerjakan, apa hasilnya
 ${ragContext}`;
 }
 

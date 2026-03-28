@@ -60,7 +60,12 @@ async function start() {
       `/setprovider <provider> — Ganti AI provider\n` +
       `/setmodel <model> — Ganti model AI\n` +
       `/logs — Lihat activity logs\n` +
-      `/stats — Statistik bot`,
+      `/stats — Statistik bot\n` +
+      `/exec <cmd> — Jalankan shell command\n` +
+      `/install <pkg> — Install npm package\n` +
+      `/skill list — Daftar skills\n` +
+      `/skill install <name> <pkg> — Install skill\n` +
+      `/memory — Lihat memory agent`,
       { parse_mode: 'Markdown' }
     );
   });
@@ -161,6 +166,92 @@ async function start() {
       `AI provider: ${config.ai.provider}`,
       { parse_mode: 'Markdown' }
     );
+  }));
+
+
+  // ---- /skill ----
+  bot.command('skill', ownerOnly(async (ctx) => {
+    const args = ctx.message.text.split(' ').slice(1);
+    const sub = args[0];
+    const { loadSkills } = require('../tools');
+
+    if (!sub || sub === 'list') {
+      const skills = loadSkills();
+      const list = Object.values(skills);
+      if (!list.length) return ctx.reply('No skills installed.\n\nInstall with:\n/skill install <name> <npm-package>\n/skill add <name> <code>');
+      return ctx.reply('📦 *Installed Skills:*\n\n' + list.map(s => `• *${s.name}* — ${s.description}`).join('\n'), { parse_mode: 'Markdown' });
+    }
+
+    if (sub === 'install') {
+      const [, name, pkg] = args;
+      if (!name || !pkg) return ctx.reply('Usage: /skill install <name> <npm-package>');
+      await ctx.reply(`📦 Installing skill: ${name} (${pkg})...`);
+      const { executeToolCalls } = require('../tools');
+      const result = await executeToolCalls(`[CALL: executeCommand({"command": "npm install ${pkg} --save 2>&1"})]`);
+      // Create skill wrapper
+      const skillDir = require('path').join(__dirname, '..', '..', 'skills', name);
+      require('fs').mkdirSync(skillDir, { recursive: true });
+      require('fs').writeFileSync(require('path').join(skillDir, 'index.js'),
+        `const mod = require('${pkg}'); module.exports = { run: async (args) => JSON.stringify(mod) };`);
+      require('fs').writeFileSync(require('path').join(skillDir, 'skill.json'),
+        JSON.stringify({ name, description: `npm: ${pkg}`, version: '1.0.0' }, null, 2));
+      return ctx.reply(`✅ Skill *${name}* installed!`, { parse_mode: 'Markdown' });
+    }
+
+    if (sub === 'remove') {
+      const [, name] = args;
+      if (!name) return ctx.reply('Usage: /skill remove <name>');
+      const skillDir = require('path').join(__dirname, '..', '..', 'skills', name);
+      require('fs').rmSync(skillDir, { recursive: true, force: true });
+      return ctx.reply(`🗑 Skill *${name}* removed.`, { parse_mode: 'Markdown' });
+    }
+
+    return ctx.reply('Usage:\n/skill list\n/skill install <name> <npm-package>\n/skill remove <name>');
+  }));
+
+  // ---- /exec (owner only) ----
+  bot.command('exec', ownerOnly(async (ctx) => {
+    const cmd = ctx.message.text.split(' ').slice(1).join(' ');
+    if (!cmd) return ctx.reply('Usage: /exec <command>');
+    await ctx.sendChatAction('typing');
+    const { exec } = require('child_process');
+    const result = await new Promise(resolve => {
+      exec(cmd, { timeout: 30000, shell: '/bin/sh' }, (err, stdout, stderr) => {
+        resolve(err ? `❌ Error:\n${stderr || err.message}` : `✅ Output:\n${stdout || '(no output)'}`.slice(0, 3800));
+      });
+    });
+    await ctx.reply(`\`\`\`\n${result}\n\`\`\``, { parse_mode: 'Markdown' }).catch(() => ctx.reply(result));
+  }));
+
+  // ---- /memory ----
+  bot.command('memory', ownerOnly(async (ctx) => {
+    const args = ctx.message.text.split(' ').slice(1);
+    const memFile = require('path').join(__dirname, '..', '..', 'data', 'memory.json');
+    if (!args[0] || args[0] === 'list') {
+      const mem = require('fs').existsSync(memFile) ? JSON.parse(require('fs').readFileSync(memFile, 'utf8')) : {};
+      const entries = Object.entries(mem);
+      if (!entries.length) return ctx.reply('Memory is empty.');
+      return ctx.reply('🧠 *Memory:*\n\n' + entries.map(([k,v]) => `• *${k}*: ${v}`).join('\n'), { parse_mode: 'Markdown' });
+    }
+    if (args[0] === 'clear') {
+      require('fs').writeFileSync(memFile, '{}');
+      return ctx.reply('🧹 Memory cleared.');
+    }
+    return ctx.reply('Usage: /memory [list|clear]');
+  }));
+
+  // ---- /install (install npm package) ----
+  bot.command('install', ownerOnly(async (ctx) => {
+    const pkg = ctx.message.text.split(' ').slice(1).join(' ');
+    if (!pkg) return ctx.reply('Usage: /install <npm-package>');
+    await ctx.reply(`📦 Installing ${pkg}...`);
+    const { exec } = require('child_process');
+    const result = await new Promise(resolve => {
+      exec(`npm install ${pkg} --save 2>&1`, { timeout: 60000 }, (err, stdout, stderr) => {
+        resolve(err ? `❌ Failed:\n${stderr}` : `✅ Installed: ${pkg}`);
+      });
+    });
+    return ctx.reply(result);
   }));
 
   // ---- Main message handler ----

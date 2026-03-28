@@ -1,0 +1,5 @@
+{
+  "name": "weather",
+  "description": "Current weather and forecasts via Open-Meteo free API",
+  "version": "1.0.0"
+}

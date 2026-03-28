@@ -32,6 +32,21 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'generateImage',
+      description: 'Generate an image from a text prompt using AI. Use this when user asks to create, draw, generate, or make an image/picture/foto/gambar.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'Detailed description of the image to generate' },
+          style: { type: 'string', description: 'Style: realistic, anime, cartoon, painting, etc (optional)' },
+        },
+        required: ['prompt'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'executeCommand',
       description: 'Execute a shell command on the server. Use for system operations, running scripts, checking processes.',
       parameters: {
@@ -242,6 +257,38 @@ const TOOL_DEFINITIONS = [
 
 // ---- Tool Implementations ----
 const TOOLS = {
+  generateImage: {
+    enabled: () => !!process.env.BLINK_API_KEY,
+    run: async ({ prompt, style }) => {
+      try {
+        const fullPrompt = style ? `${prompt}, style: ${style}` : prompt;
+        const res = await fetch('https://core.blink.new/api/v1/ai/images/generations', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.BLINK_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'fal-ai/flux/schnell',
+            prompt: fullPrompt,
+            n: 1,
+            size: '1024x1024',
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          return `IMAGE_ERROR: ${err.slice(0, 200)}`;
+        }
+        const data = await res.json();
+        const url = data.data?.[0]?.url || data.url || data.images?.[0];
+        if (!url) return `IMAGE_ERROR: No URL in response: ${JSON.stringify(data).slice(0, 200)}`;
+        return `IMAGE_URL:${url}`;
+      } catch (e) {
+        return `IMAGE_ERROR: ${e.message}`;
+      }
+    },
+  },
+
   executeCommand: {
     enabled: () => config.tools.shell,
     run: ({ command, timeout }) => new Promise((resolve) => {

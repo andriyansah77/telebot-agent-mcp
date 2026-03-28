@@ -7,18 +7,17 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Core agent logic — v4
+ * Core agent logic — v5
  * - Persistent task execution (never gives up)
- * - sendProgress callback for long tasks
+ * - sendProgress callback for live status updates
  * - Native function calling loop (up to 10 iterations)
- * - Tool failure → AI tries alternative approach automatically
+ * - Tool failure → AI tries alternative
+ * - Detailed execution log: every file write/command/edit is reported
  */
 async function processMessage({ userId, channel, name, text, imageUrl, sendProgress }) {
-  // Ensure user exists
   let user = db.getUser(userId, channel);
   if (!user) user = db.upsertUser(userId, channel, name);
 
-  // Check approval
   const isOwner = isOwnerUser(userId, channel);
   if (!isOwner && config.requireApproval && !user.approved) {
     return {
@@ -29,7 +28,6 @@ async function processMessage({ userId, channel, name, text, imageUrl, sendProgr
 
   if (user.blocked) return { reply: null };
 
-  // Log message
   db.addLog(userId, channel, 'message', (text || '').slice(0, 500));
 
   // RAG context
@@ -43,17 +41,13 @@ async function processMessage({ userId, channel, name, text, imageUrl, sendProgr
     } catch {}
   }
 
-  // Get history
   const history = db.getHistory(userId, channel, config.agent.maxHistory);
 
-  // Load SOUL.md
   const soulPath = path.join(__dirname, '..', 'SOUL.md');
   const soul = fs.existsSync(soulPath) ? fs.readFileSync(soulPath, 'utf8') : '';
 
-  // Build system prompt
   const systemPrompt = buildSystemPrompt(soul, ragContext);
 
-  // Build messages
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,
@@ -77,7 +71,6 @@ async function processMessage({ userId, channel, name, text, imageUrl, sendProgr
   if (useNativeCalling && toolDefs.length > 0) {
     finalReply = await runAgentLoop(messages, toolDefs, toolsExecuted, sendProgress);
   } else {
-    // Legacy [CALL:] mode
     let aiReply;
     try {
       aiReply = await chat(messages);
@@ -94,7 +87,7 @@ async function processMessage({ userId, channel, name, text, imageUrl, sendProgr
       const followUp = [
         ...messages,
         { role: 'assistant', content: aiReply },
-        { role: 'user', content: `Tool results:\n${toolResults}\n\nBerikan jawaban final.` },
+        { role: 'user', content: `Tool results:\n${toolResults}\n\nBerikan jawaban final yang detail.` },
       ];
       try { finalReply = await chat(followUp); }
       catch { finalReply = result; }
@@ -103,11 +96,10 @@ async function processMessage({ userId, channel, name, text, imageUrl, sendProgr
     }
   }
 
-  // Save to history
   db.addHistory(userId, channel, 'user', text || '[image]');
   db.addHistory(userId, channel, 'assistant', typeof finalReply === 'string' ? finalReply : JSON.stringify(finalReply));
 
-  // Media detection: legacy prefix
+  // Media detection
   if (typeof finalReply === 'string') {
     const mediaMatch = finalReply.match(/^(IMAGE|AUDIO|VIDEO):(https?:\/\/\S+)/m);
     if (mediaMatch) {
@@ -119,7 +111,6 @@ async function processMessage({ userId, channel, name, text, imageUrl, sendProgr
     }
   }
 
-  // Media detection: tool result IMAGE_URL
   const imgTool = toolsExecuted.find(t => t.tool === 'generateImage' && t.output?.startsWith('IMAGE_URL:'));
   if (imgTool) {
     const imgUrl = imgTool.output.replace('IMAGE_URL:', '').trim();
@@ -133,12 +124,47 @@ async function processMessage({ userId, channel, name, text, imageUrl, sendProgr
   return { reply: finalReply, toolsExecuted };
 }
 
+// ---- Human-readable tool step label ----
+function describeToolCall(name, args) {
+  switch (name) {
+    case 'executeCommand':
+      return `🖥 Menjalankan command:\n\`${(args.command || '').slice(0, 200)}\``;
+    case 'readFile':
+      return `📖 Membaca file: \`${args.path}\``;
+    case 'writeFile':
+      return `✏️ Menulis file: \`${args.path}\`\n_(${(args.content || '').length} karakter)_`;
+    case 'appendFile':
+      return `➕ Append ke file: \`${args.path}\``;
+    case 'deleteFile':
+      return `🗑 Menghapus file: \`${args.path}\``;
+    case 'listDirectory':
+      return `📂 List direktori: \`${args.path || '.'}\``;
+    case 'httpGet':
+      return `🌐 HTTP GET: \`${args.url}\``;
+    case 'httpPost':
+      return `📤 HTTP POST: \`${args.url}\``;
+    case 'webSearch':
+      return `🔍 Mencari: _${args.query}_`;
+    case 'fetchPage':
+      return `🌐 Fetch halaman: \`${args.url}\``;
+    case 'generateImage':
+      return `🎨 Generate gambar: _${args.prompt}_`;
+    case 'remember':
+      return `🧠 Menyimpan memori: \`${args.key}\` = \`${args.value}\``;
+    case 'recall':
+      return `🧠 Recall memori: \`${args.key || 'semua'}\``;
+    case 'runJavaScript':
+      return `⚡ Menjalankan JavaScript`;
+    case 'calculator':
+      return `🔢 Kalkulasi: \`${args.expression}\``;
+    case 'installPackage':
+      return `📦 Install package: \`${args.package}\``;
+    default:
+      return `🔧 Tool: \`${name}\``;
+  }
+}
+
 // ---- Persistent Agent Loop ----
-// Rules:
-// 1. Max 10 tool-call iterations
-// 2. On tool error → inject error into context, let AI decide next step
-// 3. Never tell user "can't do it" — always try alternative
-// 4. If task is long, call sendProgress() between iterations
 async function runAgentLoop(messages, toolDefs, toolsExecuted, sendProgress, maxIterations = 10) {
   let currentMessages = [...messages];
   let iteration = 0;
@@ -151,77 +177,78 @@ async function runAgentLoop(messages, toolDefs, toolsExecuted, sendProgress, max
     try {
       aiResponse = await chat(currentMessages, { tools: toolDefs, tool_choice: 'auto' });
     } catch (e) {
-      // AI call failed — retry once with stripped history
       console.error(`[Agent] AI call failed (iter ${iteration}):`, e.message);
       try {
-        // Retry with last 4 messages only
-        const stripped = [
-          currentMessages[0], // system
-          ...currentMessages.slice(-3),
-        ];
+        const stripped = [currentMessages[0], ...currentMessages.slice(-3)];
         aiResponse = await chat(stripped, { tools: toolDefs, tool_choice: 'auto' });
       } catch (e2) {
         return `❌ AI tidak bisa diakses saat ini: ${e2.message}`;
       }
     }
 
-    // Final text answer — done
+    // Final text answer
     if (typeof aiResponse === 'string') {
       return aiResponse;
     }
 
-    // Tool call(s)
+    // Tool calls
     if (aiResponse.type === 'tool_calls' && aiResponse.tool_calls?.length > 0) {
-      // Send progress update if task is taking long (>8s since last update)
       const now = Date.now();
-      if (sendProgress && now - lastProgressAt > 8000 && iteration > 1) {
-        const toolNames = aiResponse.tool_calls.map(tc => tc.name || tc.function?.name).join(', ');
-        await sendProgress(`Menjalankan: \`${toolNames}\`...`).catch(() => {});
-        lastProgressAt = now;
+
+      // Send live progress: describe each tool call in human language
+      if (sendProgress) {
+        const stepDescriptions = aiResponse.tool_calls.map(tc => {
+          const name = tc.name || tc.function?.name;
+          let args = {};
+          try { args = typeof tc.input === 'object' ? tc.input : JSON.parse(tc.function?.arguments || '{}'); } catch {}
+          return describeToolCall(name, args);
+        });
+
+        // Only send if it's been a moment since last update (avoid spam for fast tools)
+        if (now - lastProgressAt > 2000 || iteration === 1) {
+          const progressMsg = stepDescriptions.join('\n');
+          await sendProgress(progressMsg).catch(() => {});
+          lastProgressAt = Date.now();
+        }
       }
 
       const toolResults = await executeNativeToolCalls(aiResponse.tool_calls);
 
-      // Collect executed tools
       for (const r of toolResults) {
         toolsExecuted.push({ tool: r.name, output: r.output });
       }
 
-      // Add assistant turn
       currentMessages.push(aiResponse.message);
 
-      // Add tool results — if a tool errored, inject retry instruction
       for (const result of toolResults) {
         const isError = result.output.startsWith('Error:') || result.output.startsWith('IMAGE_ERROR:');
-
         currentMessages.push({
           role: 'tool',
           tool_call_id: result.id || result.name,
           content: isError
-            ? `${result.output}\n\n[SYSTEM: Tool failed. Cari cara lain untuk menyelesaikan task ini. Jangan menyerah, coba pendekatan alternatif.]`
+            ? `${result.output}\n\n[SYSTEM: Tool gagal. Analisis error ini, cari pendekatan alternatif, dan lanjutkan task. Jangan menyerah.]`
             : result.output,
         });
       }
 
-      continue; // next iteration
+      continue;
     }
 
-    // Unexpected response shape — treat as final
     return typeof aiResponse === 'string'
       ? aiResponse
       : (aiResponse.message?.content || JSON.stringify(aiResponse));
   }
 
-  // Hit max iterations — get final summary from AI
+  // Max iterations — request final summary
   try {
     currentMessages.push({
       role: 'user',
-      content: 'Berikan laporan final dari semua yang sudah kamu kerjakan. Apa yang berhasil, apa hasilnya, dan apa langkah selanjutnya jika ada.',
+      content: 'Buat laporan lengkap dari semua yang sudah dikerjakan: file apa yang dibuat/diedit, command apa yang dijalankan, output apa yang didapat, dan apa hasilnya.',
     });
     const final = await chat(currentMessages);
     return typeof final === 'string' ? final : JSON.stringify(final);
   } catch {
-    return '✅ Selesai mengeksekusi semua steps. Ketik lanjut jika ada yang perlu dilanjutkan.';
+    return '✅ Semua steps selesai dieksekusi.';
   }
 }
 
@@ -245,23 +272,29 @@ Platform: Telegram Bot
 ${tools}
 
 ## Prinsip Eksekusi (WAJIB DIIKUTI)
-1. **Jangan pernah berhenti di tengah task** — kalau satu cara gagal, coba cara lain
-2. **Jangan bilang "tidak bisa"** tanpa benar-benar mencoba semua opsi
-3. **Chain tools** untuk task kompleks — search → fetch → execute → verify
-4. **Kalau tool error** → analisis errornya, cari workaround, eksekusi ulang
-5. **Selesaikan sampai tuntas** — task dianggap selesai hanya kalau ada hasil nyata
-6. Eksekusi dulu, jelaskan setelah
+1. Jangan pernah berhenti di tengah task — kalau satu cara gagal, coba cara lain
+2. Jangan bilang "tidak bisa" tanpa benar-benar mencoba semua opsi
+3. Chain tools untuk task kompleks — search → fetch → execute → verify
+4. Kalau tool error → analisis errornya, cari workaround, eksekusi ulang
+5. Selesaikan sampai tuntas — task dianggap selesai hanya kalau ada hasil nyata
 
-## Format Output (PENTING)
+## Pelaporan Tugas (WAJIB)
+Setiap kali melakukan operasi file atau command, WAJIB laporan detail:
+- Kalau **menulis/edit file**: sebutkan nama file, path lengkap, apa yang diubah, dan tampilkan isi yang ditulis (minimal preview)
+- Kalau **menjalankan command**: sebutkan command-nya dan tampilkan output hasilnya
+- Kalau **membuat file baru**: sebutkan nama, lokasi, dan isi file
+- Kalau **menghapus file**: sebutkan file yang dihapus dan alasannya
+- Kalau **search/fetch web**: sebutkan apa yang dicari dan summary hasilnya
+- Di akhir task: buat **ringkasan lengkap** — apa yang dikerjakan, file mana yang berubah, hasil akhirnya apa
+
+## Format Output
 - Bold untuk judul/highlight: **teks**
-- Italic untuk emphasis: _teks_
-- Code block untuk kode/command: triple backtick
-- Inline code untuk nama file/variabel: single backtick
-- Bullet list dengan tanda hubung atau bullet
-- JANGAN campur format seperti bold-italic bersamaan
-- JANGAN pakai heading (#) kecuali memang perlu section besar
-- Jawaban singkat: plain text saja, tidak perlu format berlebihan
-- Jawaban panjang/terstruktur: pakai heading dan list yang konsisten dan rapi
+- Italic untuk emphasis
+- Code block untuk kode/command
+- Inline code untuk nama file/path/variabel
+- Bullet list untuk daftar
+- Jawaban singkat: plain text saja
+- Jawaban/tugas panjang: terstruktur dengan section yang jelas
 ${ragContext}`;
 }
 

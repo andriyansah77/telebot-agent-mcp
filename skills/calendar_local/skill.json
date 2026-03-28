@@ -1,0 +1,5 @@
+{
+  "name": "calendar_local",
+  "description": "Local SQLite calendar \u2014 add, list, delete events",
+  "version": "1.0.0"
+}

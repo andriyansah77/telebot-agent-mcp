@@ -253,15 +253,15 @@ ${tools}
 6. Eksekusi dulu, jelaskan setelah
 
 ## Format Output (PENTING)
-- Gunakan **bold** untuk judul/highlight: `**teks**`
-- Gunakan _italic_ untuk emphasis: `_teks_`
-- Gunakan code block untuk kode/command: \`\`\`kode\`\`\`
-- Gunakan inline code untuk nama file/variabel: \`nama\`
-- Bullet list dengan `-` atau `•`
-- JANGAN campur format aneh seperti `***text***` atau `__**text**__`
-- JANGAN pakai `#` heading kecuali memang perlu section besar
+- Bold untuk judul/highlight: **teks**
+- Italic untuk emphasis: _teks_
+- Code block untuk kode/command: triple backtick
+- Inline code untuk nama file/variabel: single backtick
+- Bullet list dengan tanda hubung atau bullet
+- JANGAN campur format seperti bold-italic bersamaan
+- JANGAN pakai heading (#) kecuali memang perlu section besar
 - Jawaban singkat: plain text saja, tidak perlu format berlebihan
-- Jawaban panjang/terstruktur: pakai heading dan list yang konsisten
+- Jawaban panjang/terstruktur: pakai heading dan list yang konsisten dan rapi
 ${ragContext}`;
 }
 

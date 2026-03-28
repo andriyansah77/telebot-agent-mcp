@@ -246,12 +246,20 @@ async function start() {
     try {
       const userId = ctx.from.id.toString();
 
-      // Check approval
-      const dbModule = require('../database');
-      const user = dbModule.getUser(userId);
-      if (!user) return ctx.reply('❌ Akun kamu belum terdaftar. Kirim /start dulu.');
-      if (user.blocked) return ctx.reply('❌ Akun kamu diblokir.');
-      if (!user.approved && userId !== process.env.OWNER_ID) {
+      // Auto-approve owner
+      if (isOwnerUser(ctx.from.id, 'telegram')) {
+        db.approveUser(ctx.from.id, 'telegram');
+      }
+
+      // Upsert user so they're always registered
+      db.upsertUser(ctx.from.id, 'telegram', ctx.from.first_name);
+
+      // Check if blocked
+      const user = db.getUser(userId, 'telegram');
+      if (user && user.blocked) return; // silently ignore
+
+      // Check approval (owner bypasses)
+      if (!isOwnerUser(ctx.from.id, 'telegram') && config.requireApproval && user && !user.approved) {
         return ctx.reply('⏳ Akun kamu belum disetujui. Tunggu approval dari owner.');
       }
 
@@ -259,48 +267,42 @@ async function start() {
 
       // Get best quality photo
       const photos = ctx.message.photo;
-      const photo = photos[photos.length - 1]; // highest res
+      const photo = photos[photos.length - 1];
       const fileLink = await ctx.telegram.getFileLink(photo.file_id);
       const imageUrl = fileLink.href;
 
-      // Caption as user question, default to "Apa yang ada di gambar ini?"
       const caption = ctx.message.caption || 'Apa yang ada di gambar ini? Deskripsikan secara detail.';
 
-      // Build vision message (OpenAI vision format — supported by Claude via Blink)
-      const visionMessages = [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image_url',
-              image_url: { url: imageUrl }
-            },
-            {
-              type: 'text',
-              text: caption
-            }
-          ]
+      // Route through processMessage so history, RAG, tools all work
+      const { processMessage } = require('../agent');
+      const result = await processMessage({
+        userId: ctx.from.id,
+        channel: 'telegram',
+        name: ctx.from.first_name,
+        text: caption,
+        imageUrl,
+      });
+
+      const { reply, media } = result;
+
+      if (media) {
+        try {
+          if (media.type === 'image') {
+            await ctx.replyWithPhoto(media.url, reply ? { caption: reply } : {});
+          } else {
+            await ctx.replyWithDocument(media.url, reply ? { caption: reply } : {});
+          }
+        } catch {
+          if (reply) await ctx.reply(reply).catch(() => {});
         }
-      ];
-
-      // Call AI with vision
-      const aiModule = require('../ai');
-      const reply = await aiModule.chat(visionMessages);
-
-      // Log to DB
-      dbModule.addLog(userId, 'telegram', `[IMAGE] ${caption}`, reply);
-
-      // Send response
-      const chunks = splitMessage(reply);
-      for (const chunk of chunks) {
-        await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk));
+        return;
       }
 
-      // Also add to RAG if owner sends image with specific caption
-      if (userId === process.env.OWNER_ID && caption.toLowerCase().startsWith('/learn ')) {
-        const rag = require('../rag');
-        const knowledgeName = `img-${Date.now()}`;
-        await rag.addDocument(knowledgeName, `Image content: ${reply}`, 'image');
+      if (reply) {
+        const chunks = splitMessage(reply);
+        for (const chunk of chunks) {
+          await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk));
+        }
       }
 
     } catch(e) {

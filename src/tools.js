@@ -262,17 +262,16 @@ const TOOLS = {
     run: async ({ prompt, style }) => {
       try {
         const fullPrompt = style ? `${prompt}, style: ${style}` : prompt;
-        const res = await fetch('https://core.blink.new/api/v1/ai/images/generations', {
+        // Correct Blink AI image endpoint
+        const res = await fetch('https://core.blink.new/api/v1/ai/image', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${process.env.BLINK_API_KEY}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'fal-ai/flux/schnell',
             prompt: fullPrompt,
-            n: 1,
-            size: '1024x1024',
+            model: 'fal-ai/flux/schnell',
           }),
         });
         if (!res.ok) {
@@ -280,8 +279,12 @@ const TOOLS = {
           return `IMAGE_ERROR: ${err.slice(0, 200)}`;
         }
         const data = await res.json();
-        const url = data.data?.[0]?.url || data.url || data.images?.[0];
-        if (!url) return `IMAGE_ERROR: No URL in response: ${JSON.stringify(data).slice(0, 200)}`;
+        // Response: { result: { data: [{ url }] } }
+        const url = data.result?.data?.[0]?.url
+          || data.data?.[0]?.url
+          || data.url
+          || data.images?.[0];
+        if (!url) return `IMAGE_ERROR: No URL in response: ${JSON.stringify(data).slice(0, 300)}`;
         return `IMAGE_URL:${url}`;
       } catch (e) {
         return `IMAGE_ERROR: ${e.message}`;

@@ -69,7 +69,27 @@ async function start() {
   bot.command('model', async (ctx) => {
     const provider = config.ai.provider;
     const cfg = config.ai[provider] || config.ai.custom;
-    await ctx.reply(`🤖 Provider: ${provider}\nModel: ${cfg.model || 'N/A'}`);
+    const akashlmlModels = `\n\n*AkashML models:*\n• Qwen/Qwen3-30B-A3B\n• deepseek-ai/DeepSeek-V3.2\n• MiniMaxAI/MiniMax-M2.5`;
+    await ctx.reply(
+      `🤖 *Provider:* ${provider}\n*Model:* \`${cfg.model || 'N/A'}\`` +
+      (provider === 'akashml' ? akashlmlModels : ''),
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // ---- /models ----
+  bot.command('models', async (ctx) => {
+    await ctx.reply(
+      `📋 *Available Models per Provider:*\n\n` +
+      `*akashml:*\n• \`Qwen/Qwen3-30B-A3B\` — fast & capable\n• \`deepseek-ai/DeepSeek-V3.2\` — strong reasoning\n• \`MiniMaxAI/MiniMax-M2.5\` — long context\n\n` +
+      `*openrouter:*\n• \`google/gemini-2.0-flash-exp\`\n• \`meta-llama/llama-3.3-70b-instruct\`\n• (any openrouter model)\n\n` +
+      `*openai:*\n• \`gpt-4o\`, \`gpt-4o-mini\`\n\n` +
+      `*gemini:*\n• \`gemini-2.0-flash-exp\`\n\n` +
+      `*anthropic:*\n• \`claude-3-5-sonnet-20241022\`\n\n` +
+      `*groq:*\n• \`llama-3.3-70b-versatile\`\n\n` +
+      `Use /setprovider <name> then /setmodel <model>`,
+      { parse_mode: 'Markdown' }
+    );
   });
 
   // ---- Owner commands ----

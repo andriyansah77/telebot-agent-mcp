@@ -50,6 +50,17 @@ module.exports = {
       baseUrl: 'https://api.groq.com/openai/v1',
     },
 
+    // AkashML — OpenAI-compatible, multiple models
+    akashml: {
+      apiKey: process.env.AKASHML_API_KEY || '',
+      model: process.env.AKASHML_MODEL || 'Qwen/Qwen3-30B-A3B',
+      baseUrl: 'https://api.akashml.com/v1',
+      // Available models:
+      // - Qwen/Qwen3-30B-A3B (default, fast & capable)
+      // - deepseek-ai/DeepSeek-V3.2 (strong reasoning)
+      // - MiniMaxAI/MiniMax-M2.5 (long context)
+    },
+
     custom: {
       apiKey: process.env.CUSTOM_API_KEY || '',
       baseUrl: process.env.CUSTOM_BASE_URL || '',

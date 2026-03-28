@@ -111,6 +111,7 @@ async function processMessage({ userId, channel, name, text, imageUrl }) {
 
   // Handle media responses
   if (typeof finalReply === 'string') {
+    // Legacy prefix: IMAGE:url
     const mediaMatch = finalReply.match(/^(IMAGE|AUDIO|VIDEO):(https?:\/\/\S+)/m);
     if (mediaMatch) {
       return {
@@ -119,6 +120,17 @@ async function processMessage({ userId, channel, name, text, imageUrl }) {
         toolsExecuted,
       };
     }
+  }
+
+  // Check if any tool result contained an IMAGE_URL
+  const imgTool = toolsExecuted.find(t => t.tool === 'generateImage' && t.output?.startsWith('IMAGE_URL:'));
+  if (imgTool) {
+    const imageUrl = imgTool.output.replace('IMAGE_URL:', '').trim();
+    return {
+      reply: typeof finalReply === 'string' ? finalReply : null,
+      media: { type: 'image', url: imageUrl },
+      toolsExecuted,
+    };
   }
 
   return { reply: finalReply, toolsExecuted };

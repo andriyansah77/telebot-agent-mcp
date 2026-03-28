@@ -1,0 +1,5 @@
+{
+  "name": "google",
+  "description": "Google Workspace \u2014 Sheets, Drive, Calendar via OAuth2",
+  "version": "1.0.0"
+}

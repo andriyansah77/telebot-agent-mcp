@@ -1,26 +1,22 @@
 require('dotenv').config();
 
 module.exports = {
-  // Channels
   channels: {
     telegram: process.env.ENABLE_TELEGRAM !== 'false',
     whatsapp: process.env.ENABLE_WHATSAPP === 'true',
   },
 
-  // Telegram
   telegram: {
     token: process.env.TELEGRAM_BOT_TOKEN || '',
     ownerId: parseInt(process.env.TELEGRAM_OWNER_ID || '0'),
   },
 
-  // WhatsApp
   whatsapp: {
     ownerNumber: process.env.WHATSAPP_OWNER_NUMBER || '',
   },
 
-  // AI Provider
   ai: {
-    provider: process.env.AI_PROVIDER || 'openrouter',
+    provider: process.env.AI_PROVIDER || 'blink',
 
     openai: {
       apiKey: process.env.OPENAI_API_KEY || '',
@@ -41,7 +37,7 @@ module.exports = {
 
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY || '',
-      model: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022',
+      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20251001',
     },
 
     groq: {
@@ -50,22 +46,19 @@ module.exports = {
       baseUrl: 'https://api.groq.com/openai/v1',
     },
 
-    // AkashML — OpenAI-compatible, multiple models
     akashml: {
       apiKey: process.env.AKASHML_API_KEY || '',
       model: process.env.AKASHML_MODEL || 'Qwen/Qwen3-30B-A3B',
       baseUrl: 'https://api.akashml.com/v1',
-      // Available models:
-      // - Qwen/Qwen3-30B-A3B (default, fast & capable)
-      // - deepseek-ai/DeepSeek-V3.2 (strong reasoning)
-      // - MiniMaxAI/MiniMax-M2.5 (long context)
     },
 
-    // Blink AI Gateway
+    // Blink AI Gateway — primary provider
     blink: {
       apiKey: process.env.BLINK_API_KEY || '',
       model: process.env.BLINK_MODEL || 'anthropic/claude-sonnet-4-5',
-      baseUrl: 'https://core.blink.new/api/v1/ai',
+      baseUrl: process.env.BLINK_APIS_URL
+        ? `${process.env.BLINK_APIS_URL}/api/v1/ai`
+        : 'https://core.blink.new/api/v1/ai',
     },
 
     custom: {
@@ -75,37 +68,32 @@ module.exports = {
     },
   },
 
-  // Agent
   agent: {
-    name: process.env.AGENT_NAME || 'Agent',
-    systemPrompt: process.env.AGENT_SYSTEM_PROMPT ||
-      'You are a powerful AI agent. You can execute commands, read/write files, search the web, and help with any task.',
+    name: process.env.AGENT_NAME || 'GweiAgents',
+    systemPrompt: process.env.AGENT_SYSTEM_PROMPT || '',
     maxTokens: parseInt(process.env.MAX_TOKENS || '4096'),
     temperature: parseFloat(process.env.TEMPERATURE || '0.7'),
     maxHistory: parseInt(process.env.MAX_HISTORY || '20'),
+    topP: parseFloat(process.env.TOP_P || '0.9'),
   },
 
-  // Approval
-  requireApproval: process.env.REQUIRE_APPROVAL !== 'false',
+  requireApproval: process.env.REQUIRE_APPROVAL === 'true',
 
-  // Tools
   tools: {
     shell: process.env.TOOL_SHELL !== 'false',
     file: process.env.TOOL_FILE !== 'false',
     web: process.env.TOOL_WEB !== 'false',
     http: process.env.TOOL_HTTP !== 'false',
     code: process.env.TOOL_CODE !== 'false',
+    braveApiKey: process.env.BRAVE_SEARCH_API_KEY || '',
   },
 
-  // Database
   dbPath: process.env.DB_PATH || './data/agent.db',
 
-  // HTTP Server
   http: {
     port: parseInt(process.env.HTTP_PORT || '3000'),
     enabled: process.env.HTTP_ENABLED !== 'false',
   },
 
-  // Logging
   logLevel: process.env.LOG_LEVEL || 'info',
 };

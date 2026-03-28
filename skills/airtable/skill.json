@@ -1,0 +1,5 @@
+{
+  "name": "airtable",
+  "description": "Airtable REST API \u2014 query, create, update records",
+  "version": "1.0.0"
+}

@@ -241,6 +241,82 @@ async function start() {
   }));
 
 
+  // ---- Photo/Image handler ----
+  bot.on('photo', async (ctx) => {
+    try {
+      const userId = ctx.from.id.toString();
+
+      // Check approval
+      const dbModule = require('../database');
+      const user = dbModule.getUser(userId);
+      if (!user) return ctx.reply('❌ Akun kamu belum terdaftar. Kirim /start dulu.');
+      if (user.blocked) return ctx.reply('❌ Akun kamu diblokir.');
+      if (!user.approved && userId !== process.env.OWNER_ID) {
+        return ctx.reply('⏳ Akun kamu belum disetujui. Tunggu approval dari owner.');
+      }
+
+      await ctx.sendChatAction('typing');
+
+      // Get best quality photo
+      const photos = ctx.message.photo;
+      const photo = photos[photos.length - 1]; // highest res
+      const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+      const imageUrl = fileLink.href;
+
+      // Caption as user question, default to "Apa yang ada di gambar ini?"
+      const caption = ctx.message.caption || 'Apa yang ada di gambar ini? Deskripsikan secara detail.';
+
+      // Build vision message (OpenAI vision format — supported by Claude via Blink)
+      const visionMessages = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: imageUrl }
+            },
+            {
+              type: 'text',
+              text: caption
+            }
+          ]
+        }
+      ];
+
+      // Call AI with vision
+      const aiModule = require('../ai');
+      const reply = await aiModule.chat(visionMessages);
+
+      // Log to DB
+      dbModule.addLog(userId, 'telegram', `[IMAGE] ${caption}`, reply);
+
+      // Send response
+      const chunks = splitMessage(reply);
+      for (const chunk of chunks) {
+        await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk));
+      }
+
+      // Also add to RAG if owner sends image with specific caption
+      if (userId === process.env.OWNER_ID && caption.toLowerCase().startsWith('/learn ')) {
+        const rag = require('../rag');
+        const knowledgeName = `img-${Date.now()}`;
+        await rag.addDocument(knowledgeName, `Image content: ${reply}`, 'image');
+      }
+
+    } catch(e) {
+      console.error('[Telegram] Photo error:', e.message);
+      ctx.reply('❌ Gagal analisis gambar: ' + e.message);
+    }
+  });
+
+  // ---- Sticker handler (fun) ----
+  bot.on('sticker', async (ctx) => {
+    const userId = ctx.from.id.toString();
+    if (userId !== process.env.OWNER_ID) return;
+    ctx.reply('👀 Stiker keren! Mau aku analisis gambarnya? Kirim foto biasa ya biar bisa dibaca.');
+  });
+
+
   // ---- /learn ----
   bot.command('learn', ownerOnly(async (ctx) => {
     const args = ctx.message.text.split(' ').slice(1);

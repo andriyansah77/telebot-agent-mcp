@@ -8,7 +8,7 @@ const config = require('./config');
  * Core agent logic — channel-agnostic
  * Returns { reply, toolsExecuted }
  */
-async function processMessage({ userId, channel, name, text }) {
+async function processMessage({ userId, channel, name, text, imageUrl }) {
   // Ensure user exists
   let user = db.getUser(userId, channel);
   if (!user) {
@@ -39,7 +39,10 @@ async function processMessage({ userId, channel, name, text }) {
   const messages = [
     { role: 'system', content: systemPrompt },
     ...history,
-    { role: 'user', content: text },
+    { role: 'user', content: imageUrl
+        ? [{ type: 'image_url', image_url: { url: imageUrl } }, { type: 'text', text: text || 'Apa yang ada di gambar ini?' }]
+        : text
+    },
   ];
 
   // Call AI

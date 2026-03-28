@@ -241,6 +241,91 @@ async function start() {
   }));
 
 
+  // ---- /learn ----
+  bot.command('learn', ownerOnly(async (ctx) => {
+    const args = ctx.message.text.split(' ').slice(1);
+    const sub = args[0];
+    const rag = require('../rag');
+
+    if (!sub || sub === 'status') {
+      const stats = rag.getStats();
+      const sources = rag.listSources();
+      const list = sources.length ? sources.map(s => `• ${s.source} (${s.type})`).join('\n') : 'Belum ada knowledge.';
+      return ctx.reply(
+        `🧠 *Knowledge Base Stats*\n\n` +
+        `📚 Sources: ${stats.sources}\n` +
+        `🔤 Chunks: ${stats.chunks}\n\n` +
+        `*Sources:*\n${list}`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    if (sub === 'text') {
+      const name = args[1];
+      const content = args.slice(2).join(' ');
+      if (!name || !content) return ctx.reply('Usage: /learn text <name> <content>');
+      await ctx.reply(`📖 Learning: "${name}"...`);
+      const chunks = await rag.addDocument(name, content, 'text');
+      return ctx.reply(`✅ Learned *${name}* (${chunks} chunks)`, { parse_mode: 'Markdown' });
+    }
+
+    if (sub === 'url') {
+      const url = args[1];
+      if (!url) return ctx.reply('Usage: /learn url <url>');
+      await ctx.reply(`🌐 Fetching and learning: ${url}...`);
+      try {
+        const fetch = require('node-fetch');
+        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        const html = await res.text();
+        const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const domain = new URL(url).hostname;
+        const chunks = await rag.addDocument(domain, text.slice(0, 20000), 'url');
+        return ctx.reply(`✅ Learned from *${domain}* (${chunks} chunks)`, { parse_mode: 'Markdown' });
+      } catch(e) {
+        return ctx.reply(`❌ Error: ${e.message}`);
+      }
+    }
+
+    if (sub === 'forget') {
+      const name = args[1];
+      if (!name) return ctx.reply('Usage: /learn forget <name>');
+      rag.deleteSource(name);
+      return ctx.reply(`🗑 Forgotten: ${name}`);
+    }
+
+    return ctx.reply(
+      '*Learn Commands:*\n\n' +
+      '/learn status — lihat knowledge base\n' +
+      '/learn text <name> <content> — tambah teks\n' +
+      '/learn url <url> — pelajari dari website\n' +
+      '/learn forget <name> — hapus knowledge',
+      { parse_mode: 'Markdown' }
+    );
+  }));
+
+  // Handle document upload for learning
+  bot.on('document', async (ctx) => {
+    if (ctx.from.id.toString() !== process.env.OWNER_ID) return;
+    const doc = ctx.message.document;
+    const allowedTypes = ['text/plain', 'application/json', 'text/markdown', 'text/csv'];
+    if (!allowedTypes.includes(doc.mime_type) && !doc.file_name.match(/\.(txt|md|json|csv|js|py)$/i)) {
+      return ctx.reply('⚠️ Upload file teks (.txt, .md, .json, .csv, .js, .py) untuk dipelajari');
+    }
+    await ctx.reply(`📄 Mempelajari file: ${doc.file_name}...`);
+    try {
+      const fileLink = await ctx.telegram.getFileLink(doc.file_id);
+      const fetch = require('node-fetch');
+      const res = await fetch(fileLink.href);
+      const text = await res.text();
+      const rag = require('../rag');
+      const chunks = await rag.addDocument(doc.file_name, text, 'file');
+      ctx.reply(`✅ File *${doc.file_name}* berhasil dipelajari (${chunks} chunks)`, { parse_mode: 'Markdown' });
+    } catch(e) {
+      ctx.reply(`❌ Error: ${e.message}`);
+    }
+  });
+
+
   // ---- /cron ----
   bot.command('cron', ownerOnly(async (ctx) => {
     const args = ctx.message.text.split(' ').slice(1);

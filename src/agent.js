@@ -1,3 +1,4 @@
+const rag = require('./rag');
 const { chat } = require('./ai');
 const db = require('./database');
 const { executeToolCalls, listTools } = require('./tools');
